@@ -23,12 +23,21 @@
 			this.replacebutton = new global::System.Windows.Forms.Button();
 			this.replaceallbutton = new global::System.Windows.Forms.Button();
 			this.canclebutton = new global::System.Windows.Forms.Button();
+			this.caseSensitiveButton = new global::System.Windows.Forms.Button();
 			base.SuspendLayout();
 			this.findtextbox.Location = new global::System.Drawing.Point(77, 7);
 			this.findtextbox.Name = "findtextbox";
-			this.findtextbox.Size = new global::System.Drawing.Size(280, 21);
+			this.findtextbox.Size = new global::System.Drawing.Size(247, 21);
 			this.findtextbox.TabIndex = 3;
-			this.findtextbox.ImeMode = global::System.Windows.Forms.ImeMode.HangulFull;
+			this.caseSensitiveButton.Location = new System.Drawing.Point(329, 6);
+			this.caseSensitiveButton.Name = "caseSensitiveButton";
+			this.caseSensitiveButton.Size = new System.Drawing.Size(28, 23);
+			this.caseSensitiveButton.TabIndex = 4;
+			this.caseSensitiveButton.Text = "Aa";
+			this.caseSensitiveButton.UseVisualStyleBackColor = true;
+			this.caseSensitiveButton.Click += new System.EventHandler(this.caseSensitiveButton_Click);
+			// 移除韩文输入法模式，使用默认输入法
+			// this.findtextbox.ImeMode = global::System.Windows.Forms.ImeMode.HangulFull;
 			this.label1.AutoSize = true;
 			this.label1.Font = new global::System.Drawing.Font("宋体", 9f, global::System.Drawing.FontStyle.Regular, global::System.Drawing.GraphicsUnit.Point, 134);
 			this.label1.Location = new global::System.Drawing.Point(12, 11);
@@ -40,7 +49,8 @@
 			this.replacetextBox.Name = "replacetextBox";
 			this.replacetextBox.Size = new global::System.Drawing.Size(280, 21);
 			this.replacetextBox.TabIndex = 5;
-			this.replacetextBox.ImeMode = global::System.Windows.Forms.ImeMode.HangulFull;
+			// 移除韩文输入法模式，使用默认输入法
+			// this.replacetextBox.ImeMode = global::System.Windows.Forms.ImeMode.HangulFull;
 			this.label2.AutoSize = true;
 			this.label2.Font = new global::System.Drawing.Font("宋体", 9f, global::System.Drawing.FontStyle.Regular, global::System.Drawing.GraphicsUnit.Point, 134);
 			this.label2.Location = new global::System.Drawing.Point(12, 48);
@@ -80,6 +90,7 @@
 			base.AutoScaleMode = global::System.Windows.Forms.AutoScaleMode.Font;
 			this.BackColor = global::System.Drawing.Color.White;
 			base.ClientSize = new global::System.Drawing.Size(366, 105);
+			base.Controls.Add(this.caseSensitiveButton);
 			base.Controls.Add(this.canclebutton);
 			base.Controls.Add(this.replaceallbutton);
 			base.Controls.Add(this.replacebutton);
@@ -117,5 +128,7 @@
 		private global::System.Windows.Forms.Button replaceallbutton;
 
 		private global::System.Windows.Forms.Button canclebutton;
+
+		private global::System.Windows.Forms.Button caseSensitiveButton;
 	}
 }

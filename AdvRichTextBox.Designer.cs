@@ -20,17 +20,30 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
+using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using TrOCR.Helper;
 
 namespace TrOCR
 {
+    public class TempTranslateEventArgs : EventArgs
+{
+    public string SourceLanguage { get; }
+    public string TargetLanguage { get; }
+
+    public TempTranslateEventArgs(string source, string target)
+    {
+        SourceLanguage = source;
+        TargetLanguage = target;
+    }
+}
     [Description("Provides a user control that allows the user to edit HTML page.")]
     [ClassInterface(ClassInterfaceType.AutoDispatch)]
     public class AdvRichTextBox : UserControl
     {
-
+        // 【新增】定义一个携带语言数据的公共事件
+        public event EventHandler<TempTranslateEventArgs> TemporaryTranslateRequested;
         protected override void Dispose(bool disposing)
         {
             if (disposing && this.components != null)
@@ -246,6 +259,8 @@ namespace TrOCR
             this.languagle.DropDown.Width = Convert.ToInt32(55f);
             this.languagle.DropDown.Height = Convert.ToInt32(70f);
             this.languagle.ShowDropDownArrow = false;
+            // 【新增】绑定 MouseDown 事件
+            this.languagle.MouseDown += new System.Windows.Forms.MouseEventHandler(this.languagle_MouseDown);
             this.topmost.DisplayStyle = ToolStripItemDisplayStyle.Image;
             this.topmost.Image = (Image)componentResourceManager.GetObject("mode.Image");
             this.topmost.ImageTransparentColor = Color.Magenta;
@@ -312,7 +327,7 @@ namespace TrOCR
             this.richTextBox1.MouseEnter += this.Form1_MouseEnter;
             this.richTextBox1.DragEnter += this.Form1_DragEnter;
             this.richTextBox1.DragDrop += this.Form1_DragDrop;
-            this.richTextBox1.SelectionAlignment = HelpRepaint.TextAlign.Justify;
+            this.richTextBox1.SelectionAlignment = HelpRepaint.TextAlign.Left;
             this.richTextBox1.SetLine = "行高";
             this.richTextBox1.Font = new Font("Times New Roman", 16f * Program.Factor, GraphicsUnit.Pixel);
             this.richTextBox1.LanguageOption = RichTextBoxLanguageOptions.UIFonts;
@@ -353,9 +368,8 @@ namespace TrOCR
             }
             set
             {
-                this.richTextBox1.Font = new Font("Times New Roman", 16f * Program.Factor, GraphicsUnit.Pixel);
                 this.richTextBox1.Text = value;
-                this.richTextBox1.Font = new Font("Times New Roman", 16f * Program.Factor, GraphicsUnit.Pixel);
+
             }
         }
 
@@ -423,8 +437,30 @@ namespace TrOCR
 
         public void toolStripButtonSplit_Click(object sender, EventArgs e)
         {
-            this.richTextBox1.Text = StaticValue.v_Split;
-            Application.DoEvents();
+            // 1. 获取上次OCR识别后缓存的、按行拆分的文本
+            string splitText = StaticValue.v_Split;
+
+            // 如果没有缓存的拆分文本，则不执行任何操作
+            if (string.IsNullOrEmpty(splitText)) return;
+    
+            // 2. 更新UI
+            this.richTextBox1.Text = splitText;
+
+            // 3. 根据设置，自动复制结果
+            if (StaticValue.IsSplitAutoCopy)
+            {
+                
+                    // 【核心修改】通过 FindForm() 获取主窗口实例并加锁
+                    var mainForm = this.FindForm() as FmMain;
+                    if (mainForm != null)
+                    {
+                        mainForm.SetClipboardWithLock(splitText);
+                    }
+              
+                
+                
+            }
+
             HelpWin32.SetForegroundWindow(StaticValue.mainHandle);
         }
 
@@ -448,48 +484,124 @@ namespace TrOCR
             HelpWin32.SetForegroundWindow(StaticValue.mainHandle);
         }
 
-        public void toolStripButtonMerge_Click(object sender, EventArgs e)
+      public void toolStripButtonMerge_Click(object sender, EventArgs e)
         {
-            string text = this.richTextBox1.Text.TrimEnd(new char[]
+            string currentText = this.richTextBox1.Text;
+            if (string.IsNullOrEmpty(currentText)) return;
+        
+            string[] lines = currentText.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None);
+            
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < lines.Length; i++)
             {
-                '\n'
-            }).TrimEnd(new char[]
-            {
-                '\r'
-            }).TrimEnd(new char[]
-            {
-                '\n'
-            });
-            if (text.Split(Environment.NewLine.ToCharArray()).Length > 1)
-            {
-                string[] array = text.Split(Environment.NewLine.ToCharArray());
-                string text2 = "";
-                for (int i = 0; i < array.Length - 1; i++)
+                string processedLine;
+                
+                if (StaticValue.IsMergeRemoveSpace)
                 {
-                    string str = array[i].Substring(array[i].Length - 1, 1);
-                    string str2 = array[i + 1].Substring(0, 1);
-                    if (AdvRichTextBox.contain_en(str) && AdvRichTextBox.contain_en(str2))
+                    // --- 全新的、最终版的智能空格处理逻辑 ---
+        
+                    // 1. 规范化：将一行中连续的多个空格（半角/全角）替换为单个半角空格，并去除首尾空格
+                    string normalizedLine = Regex.Replace(lines[i], @"[ \　]+", " ").Trim();
+        
+                    if (normalizedLine.Length <= 1)
                     {
-                        text2 = text2 + array[i] + " ";
+                        processedLine = normalizedLine;
                     }
                     else
                     {
-                        text2 += array[i];
+                        StringBuilder lineSb = new StringBuilder();
+                        lineSb.Append(normalizedLine[0]);
+        
+                        for (int j = 1; j < normalizedLine.Length; j++)
+                        {
+                            char lastChar = normalizedLine[j - 1];
+                            char currentChar = normalizedLine[j];
+        
+                            // 【核心修改】细分字符类型
+                            bool lastIsEnglish = (lastChar >= 'a' && lastChar <= 'z') || (lastChar >= 'A' && lastChar <= 'Z');
+                            bool lastIsNumber = char.IsDigit(lastChar);
+                            bool currentIsEnglish = (currentChar >= 'a' && currentChar <= 'z') || (currentChar >= 'A' && currentChar <= 'Z');
+                            bool currentIsNumber = char.IsDigit(currentChar);
+                            bool lastIsHanzi = lastChar >= 0x4E00 && lastChar <= 0x9FA5;
+                            bool currentIsHanzi = currentChar >= 0x4E00 && currentChar <= 0x9FA5;
+        
+                            // 2. 修正：移除中文汉字之间的空格
+                            if (lastIsHanzi && currentChar == ' ' && (j + 1 < normalizedLine.Length) && (normalizedLine[j + 1] >= 0x4E00 && normalizedLine[j + 1] <= 0x9FA5))
+                            {
+                                continue; // 跳过这个空格，不添加到结果中
+                            }
+        
+                            // 3. 补充：在需要且当前没有空格的地方添加空格
+                            bool spaceNeeded = (lastIsHanzi && (currentIsEnglish || currentIsNumber)) ||
+                                               ((lastIsEnglish || lastIsNumber) && currentIsHanzi);
+        
+                            if (spaceNeeded && lastChar != ' ')
+                            {
+                                lineSb.Append(" ");
+                            }
+                            
+                            lineSb.Append(currentChar);
+                        }
+                        processedLine = lineSb.ToString();
                     }
-                }
-                string str3 = text2.Substring(text2.Length - 1, 1);
-                string str4 = array[array.Length - 1].Substring(0, 1);
-                if (AdvRichTextBox.contain_en(str3) && AdvRichTextBox.contain_en(str4))
-                {
-                    text2 = text2 + array[array.Length - 1] + " ";
                 }
                 else
                 {
-                    text2 += array[array.Length - 1];
+                    // 如果不启用智能模式，则只做简单的首尾修剪
+                    processedLine = lines[i].Trim();
                 }
-                this.richTextBox1.Text = text2;
+        
+                if (string.IsNullOrEmpty(processedLine)) continue;
+        
+                sb.Append(processedLine);
+        
+                // 4. 处理行与行之间的连接（这部分逻辑保持不变）
+                if (i < lines.Length - 1)
+                {
+                    string nextLineRaw = lines[i + 1];
+                    if (!string.IsNullOrWhiteSpace(nextLineRaw))
+                    {
+                        char lastChar = processedLine.LastOrDefault();
+                        string nextLineProcessed = StaticValue.IsMergeRemoveSpace ? Regex.Replace(nextLineRaw, @"[ \　]+", " ").Trim() : nextLineRaw.Trim();
+                        
+                        if (!string.IsNullOrEmpty(nextLineProcessed))
+                        {
+                            char firstChar = nextLineProcessed.FirstOrDefault();
+
+                            // 【核心修改】细分字符类型
+                            bool lastIsEnglish = (lastChar >= 'a' && lastChar <= 'z') || (lastChar >= 'A' && lastChar <= 'Z');
+                            bool lastIsNumber = char.IsDigit(lastChar);
+                            bool firstIsEnglish = (firstChar >= 'a' && firstChar <= 'z') || (firstChar >= 'A' && firstChar <= 'Z');
+                            bool firstIsNumber = char.IsDigit(firstChar);
+                            bool lastIsHanzi = lastChar >= 0x4E00 && lastChar <= 0x9FA5;
+                            bool firstIsHanzi = firstChar >= 0x4E00 && firstChar <= 0x9FA5;
+        
+                            // 【核心修改】更新添加空格的规则，排除英文与数字之间的情况
+                            if ( (lastIsEnglish && firstIsEnglish) ||                                 // 英文-英文
+                                 (lastIsHanzi && (firstIsEnglish || firstIsNumber)) ||               // 中文-英文/数字
+                                 ((lastIsEnglish || lastIsNumber) && firstIsHanzi) )                  // 英文/数字-中文
+                            {
+                                sb.Append(" ");
+                            }
+                        }
+                    }
+                }
             }
-            Application.DoEvents();
+            string finalText = sb.ToString();
+        
+            // 更新UI并执行复制
+            this.richTextBox1.Text = finalText;
+            if (StaticValue.IsMergeAutoCopy && !string.IsNullOrEmpty(finalText))
+            {
+
+                // 【核心修改】通过 FindForm() 获取主窗口实例并加锁
+                var mainForm = this.FindForm() as FmMain;
+                if (mainForm != null)
+                {
+                    mainForm.SetClipboardWithLock(finalText);
+                }
+                
+            }
             HelpWin32.SetForegroundWindow(StaticValue.mainHandle);
         }
 
@@ -529,7 +641,16 @@ namespace TrOCR
 
         public void toolStripButtonSend_Click(object sender, EventArgs e)
         {
-            Clipboard.SetDataObject(this.richTextBox1.Text);
+            // 判断是否有选中的文本
+            string textToCopy = string.IsNullOrEmpty(this.richTextBox1.SelectedText)
+                ? this.richTextBox1.Text  // 没有选中文本，复制全部
+                : this.richTextBox1.SelectedText;  // 有选中文本，只复制选中部分
+            // 【核心修改】通过 FindForm() 获取主窗口实例并加锁
+            var mainForm = this.FindForm() as FmMain;
+            if (mainForm != null)
+            {
+                mainForm.SetClipboardWithLock(textToCopy);
+            }    
             HelpWin32.SendMessage(HelpWin32.GetForegroundWindow(), 786, 530);
             HelpWin32.keybd_event(Keys.ControlKey, 0, 0u, 0u);
             HelpWin32.keybd_event(Keys.V, 0, 0u, 0u);
@@ -658,6 +779,9 @@ namespace TrOCR
             Font font = new Font("宋体", 16f * Program.Factor, GraphicsUnit.Pixel);
             this.richTextBox1.Font = font;
             this.richTextBox1.Text = text;
+            
+            // 保存字体设置到配置文件
+            IniHelper.SetValue("工具栏", "字体", "宋体");
         }
 
         public void font_黑体c(object sender, EventArgs e)
@@ -672,6 +796,9 @@ namespace TrOCR
             Font font = new Font("黑体", 16f * Program.Factor, GraphicsUnit.Pixel);
             this.richTextBox1.Font = font;
             this.richTextBox1.Text = text;
+            
+            // 保存字体设置到配置文件
+            IniHelper.SetValue("工具栏", "字体", "黑体");
         }
 
         public void font_楷体c(object sender, EventArgs e)
@@ -686,6 +813,9 @@ namespace TrOCR
             Font font = new Font("STKaiti", 16f * Program.Factor, GraphicsUnit.Pixel);
             this.richTextBox1.Font = font;
             this.richTextBox1.Text = text;
+            
+            // 保存字体设置到配置文件
+            IniHelper.SetValue("工具栏", "字体", "楷体");
         }
 
         public void font_微软雅黑c(object sender, EventArgs e)
@@ -700,6 +830,9 @@ namespace TrOCR
             Font font = new Font("微软雅黑", 16f * Program.Factor, GraphicsUnit.Pixel);
             this.richTextBox1.Font = font;
             this.richTextBox1.Text = text;
+            
+            // 保存字体设置到配置文件
+            IniHelper.SetValue("工具栏", "字体", "微软雅黑");
         }
 
         public void font_新罗马c(object sender, EventArgs e)
@@ -714,6 +847,9 @@ namespace TrOCR
             Font font = new Font("Times New Roman", 16f * Program.Factor, GraphicsUnit.Pixel);
             this.richTextBox1.Font = font;
             this.richTextBox1.Text = text;
+            
+            // 保存字体设置到配置文件
+            IniHelper.SetValue("工具栏", "字体", "新罗马");
         }
 
         public void indent_two(int fla)
@@ -755,12 +891,21 @@ namespace TrOCR
             if (e.Control && e.KeyCode == Keys.Z)
             {
                 this.c.undo();
+                // 简单方案：撤销后光标移到文本末尾
+                // 这是最安全和最可预测的行为
                 this.richTextBox1.Text = this.c.Record;
+                this.richTextBox1.SelectionStart = this.richTextBox1.Text.Length;
+                this.richTextBox1.SelectionLength = 0;
+                this.richTextBox1.ScrollToCaret();  // 确保光标可见
             }
             if (e.Control && e.KeyCode == Keys.Y)
             {
                 this.c.redo();
+                // 重做后光标也移到文本末尾
                 this.richTextBox1.Text = this.c.Record;
+                this.richTextBox1.SelectionStart = this.richTextBox1.Text.Length;
+                this.richTextBox1.SelectionLength = 0;
+                this.richTextBox1.ScrollToCaret();  // 确保光标可见
             }
             if (e.Control && e.KeyCode == Keys.F)
             {
@@ -990,7 +1135,31 @@ namespace TrOCR
                 HelpWin32.SendMessage(StaticValue.mainHandle, 600, 725);
             }
         }
+// 【新增】languagle 按钮的 MouseDown 事件处理器
+        private void languagle_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Right)
+            {
+                using (var form = new FmTempTranslate())
+                {
+                    // 将弹窗显示在按钮旁边，体验更好
+                    form.StartPosition = FormStartPosition.Manual;
+                    form.Location = this.PointToScreen(new Point(e.X, e.Y));
 
+                    // 【核心修改】将 this.FindForm() 作为参数传入，指定所有者
+        if (form.ShowDialog(this.FindForm()) == DialogResult.OK) 
+                    {
+                         // 【新增】在触发事件前，先“记住”用户这次的选择
+                        StaticValue.LastTempSourceLang = form.SourceLanguage;
+                        StaticValue.LastTempTargetLang = form.TargetLanguage;
+                        // 如果用户点击了“翻译”
+                        // 触发事件，并将用户输入的语言代码传递出去
+                        TemporaryTranslateRequested?.Invoke(this,
+                            new TempTranslateEventArgs(form.SourceLanguage, form.TargetLanguage));
+                    }
+                }
+            }
+        }
         public void readIniFile()
         {
             string value = IniHelper.GetValue("工具栏", "顶置");
@@ -1091,9 +1260,90 @@ namespace TrOCR
             if (this.transcolor)
             {
                 this.toolStripButtonTrans.Image = (Image)componentResourceManager.GetObject("toolStripButtonTrans2.Image");
-                return;
             }
-            this.toolStripButtonTrans.Image = (Image)componentResourceManager.GetObject("toolStripButtonTrans.Image");
+            else
+            {
+                this.toolStripButtonTrans.Image = (Image)componentResourceManager.GetObject("toolStripButtonTrans.Image");
+            }
+            
+            // 加载字体设置
+            LoadFontSettings();
+        }
+        
+        /// <summary>
+        /// 从配置文件加载字体设置并应用
+        /// </summary>
+        private void LoadFontSettings()
+        {
+            try
+            {
+                string savedFont = IniHelper.GetValue("工具栏", "字体");
+                if (savedFont != "发生错误" && !string.IsNullOrEmpty(savedFont))
+                {
+                    ApplyFontSetting(savedFont);
+                }
+                else
+                {
+                    // 如果没有保存的字体设置，默认使用宋体
+                    ApplyFontSetting("新罗马");
+                }
+            }
+            catch (Exception ex)
+            {
+                // 记录错误但不中断程序执行
+                System.Diagnostics.Debug.WriteLine($"加载字体设置失败: {ex.Message}");
+                // 出错时使用默认字体
+                ApplyFontSetting("新罗马");
+            }
+        }
+        
+        /// <summary>
+        /// 应用指定的字体设置
+        /// </summary>
+        /// <param name="fontName">字体名称</param>
+        private void ApplyFontSetting(string fontName)
+        {
+            // 重置所有字体菜单项颜色
+            this.font_宋体.ForeColor = Color.Black;
+            this.font_黑体.ForeColor = Color.Black;
+            this.font_楷体.ForeColor = Color.Black;
+            this.font_微软雅黑.ForeColor = Color.Black;
+            this.font_新罗马.ForeColor = Color.Black;
+            
+            string text = this.richTextBox1.Text;
+            this.richTextBox1.Text = "";
+            
+            Font font;
+            switch (fontName)
+            {
+                case "宋体":
+                    this.font_宋体.ForeColor = Color.Red;
+                    font = new Font("宋体", 16f * Program.Factor, GraphicsUnit.Pixel);
+                    break;
+                case "黑体":
+                    this.font_黑体.ForeColor = Color.Red;
+                    font = new Font("黑体", 16f * Program.Factor, GraphicsUnit.Pixel);
+                    break;
+                case "楷体":
+                    this.font_楷体.ForeColor = Color.Red;
+                    font = new Font("STKaiti", 16f * Program.Factor, GraphicsUnit.Pixel);
+                    break;
+                case "微软雅黑":
+                    this.font_微软雅黑.ForeColor = Color.Red;
+                    font = new Font("微软雅黑", 16f * Program.Factor, GraphicsUnit.Pixel);
+                    break;
+                case "新罗马":
+                    this.font_新罗马.ForeColor = Color.Red;
+                    font = new Font("Times New Roman", 16f * Program.Factor, GraphicsUnit.Pixel);
+                    break;
+                default:
+                    this.font_宋体.ForeColor = Color.Red;
+                    font = new Font("宋体", 16f * Program.Factor, GraphicsUnit.Pixel);
+                    break;
+            }
+            
+            this.richTextBox1.Font = font;
+            this.richTextBox1.Text = text;
         }
 
         public void saveIniFile()
