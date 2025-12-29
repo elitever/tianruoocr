@@ -188,6 +188,7 @@ namespace TrOCR.Helper
             return PaddleDevice.Blas();
         }
 
+
         // --- 3. 公共方法恢复同步，调用更简单 ---
         /// <summary>
         /// 识别图像中的文字
